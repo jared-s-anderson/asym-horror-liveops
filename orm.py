@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, ARRAY
 from sqlalchemy.orm import relationship
 from database import Base
 
@@ -20,5 +20,6 @@ class MatchPlayer(Base):
     match_id = Column(Integer, ForeignKey("matches.id"))
     player_id = Column(String)
     role = Column(String)
+    perks_used = Column(ARRAY(String))
 
     match = relationship("Match", back_populates="players")
