@@ -24,6 +24,33 @@ def health_check():
 # Post a match (mock)
 @app.post("/match")
 def post_match(match: Match, db: Session = Depends(get_db)):
+    # This prevents duplicate match ids.
+    existing = db.query(MatchOrm).filter(
+        MatchOrm.match_id == match.match_id
+    ).first()
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail="Match already exists."
+        )
+    
+    # This ensures that there are only 5 players in a match.
+    if len(match.players) != 5:
+        raise HTTPException(
+            status_code=400,
+            detail="Match must have exactly 5 players"
+        )
+    
+    # This ensures that there is only 1 killer in a match.
+    killers = [p for p in match.players if p.role == "killer"]
+
+    if len(killers) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="Match must have exactly 1 killer."
+        )
+
     # This creates a MatchOrm object.
     db_match = MatchOrm(
         match_id = match.match_id,
@@ -39,7 +66,8 @@ def post_match(match: Match, db: Session = Depends(get_db)):
         db_player = MatchPlayerOrm(
             match_id = db_match.id,
             player_id = player.player_id,
-            role = player.role
+            role = player.role,
+            perks_used = player.perks_used
         )
         db.add(db_player)
 
@@ -113,6 +141,22 @@ def average_match_duration(db: Session = Depends(get_db)):
 
     return {
         "average_match_duration_seconds": round(avg_duration, 2) if avg_duration else 0
+    }
+
+@app.get("/analytics/perk-pick-rates")
+def perk_pick_rates(db: Session = Depends(get_db)):
+    results = (
+        db.query(
+            func.unnest(MatchPlayerOrm.perks_used).label("perk"),
+            func.count().label("count")
+        )
+        .group_by("perk")
+        .all()
+    )
+
+    return {
+        row.perk: row.count
+        for row in results
     }
 
 # Get example metrics
