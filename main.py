@@ -5,6 +5,8 @@ from database import SessionLocal
 from orm import Match as MatchOrm, MatchPlayer as MatchPlayerOrm
 from models import Match, MatchPlayer
 from typing import List
+from redis_client import redis_client
+import json
 
 app = FastAPI(title="Asymmetrical Horror Liveops")
 
@@ -72,6 +74,17 @@ def post_match(match: Match, db: Session = Depends(get_db)):
         db.add(db_player)
 
     db.commit()
+
+    # This invalidates the Redis cache for analytics.
+    keys_to_invalidate = [
+        "analytics:killer_win_rate",
+        "analytics:average_match_duration",
+        "analytics:perk_pick_rates"
+    ]
+
+    for key in keys_to_invalidate:
+        redis_client.delete(key)
+
     return {"status": "stored", "match_id": match.match_id}
 
 @app.get("/matches/{match_id}")
@@ -124,27 +137,53 @@ def get_all_matches(db: Session = Depends(get_db)):
 
 @app.get("/analytics/killer-win-rate")
 def killer_win_rate(db: Session = Depends(get_db)):
+    cache_key = "analytics:killer_win_rate"
+
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
     total_matches = db.query(MatchOrm).count()
     killer_wins = db.query(MatchOrm).filter(MatchOrm.killer_win == True).count()
 
     win_rate = (killer_wins / total_matches) if total_matches > 0 else 0
 
-    return {
+    result = {
         "total_matches": total_matches,
         "killer_wins": killer_wins,
         "killer_win_rate": round(win_rate, 2)
     }
 
+    redis_client.setex(cache_key, 60, json.dumps(result))
+
+    return result
+
 @app.get("/analytics/average-match-duration")
 def average_match_duration(db: Session = Depends(get_db)):
+    cache_key = "analytics:average_match_duration"
+
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
     avg_duration = db.query(func.avg(MatchOrm.duration_seconds)).scalar()
 
-    return {
-        "average_match_duration_seconds": round(avg_duration, 2) if avg_duration else 0
+    result = {
+        "average_match_duration_seconds": round(float(avg_duration), 2) if avg_duration else 0
     }
+
+    redis_client.setex(cache_key, 60, json.dumps(result))
+
+    return result
 
 @app.get("/analytics/perk-pick-rates")
 def perk_pick_rates(db: Session = Depends(get_db)):
+    cache_key = "analytics:perk_pick_rates"
+
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+
     results = (
         db.query(
             func.unnest(MatchPlayerOrm.perks_used).label("perk"),
@@ -154,10 +193,14 @@ def perk_pick_rates(db: Session = Depends(get_db)):
         .all()
     )
 
-    return {
+    pick_rates = {
         row.perk: row.count
         for row in results
     }
+
+    redis_client.setex(cache_key, 60, json.dumps(pick_rates))
+
+    return pick_rates
 
 # Get example metrics
 @app.get("/metrics/winrates")
