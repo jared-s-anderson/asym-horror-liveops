@@ -1,0 +1,35 @@
+version: '3.9'
+
+services:
+  api:
+    build: .
+    container_name: asym_horror_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://horror_app:horror_dev@db:5432/horror_liveops
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - db
+      - redis
+
+  db:
+    image: postgres:15
+    container_name: horror_postgres
+    environment:
+      POSTGRES_DB: horror_liveops
+      POSTGRES_USER: horror_app
+      POSTGRES_PASSWORD: horror_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7
+    container_name: horror_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:

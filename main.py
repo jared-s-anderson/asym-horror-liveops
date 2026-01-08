@@ -1,12 +1,15 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from database import SessionLocal
+from database import SessionLocal, Base, engine
 from orm import Match as MatchOrm, MatchPlayer as MatchPlayerOrm
 from models import Match, MatchPlayer
 from typing import List
 from redis_client import redis_client
 import json
+
+# This creates all tables if they don't exist.
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Asymmetrical Horror Liveops")
 

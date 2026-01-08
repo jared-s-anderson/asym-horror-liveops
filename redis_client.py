@@ -1,8 +1,8 @@
+import os
 import redis
 
-redis_client = redis.Redis(
-    host="localhost",
-    port=6379,
-    db=0,
-    decode_responses=True
-)
+# This gets the Redis URL from the environment variables and there is a fallback to localhost for local development.
+REDIS_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379")
+
+# This creates the Redis client.
+redis_client = redis.from_url(REDIS_URL)
