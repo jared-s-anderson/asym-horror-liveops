@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, ARRAY
+from sqlalchemy import Column, Integer, String, Boolean, ForeignKey, ARRAY, DateTime
 from sqlalchemy.orm import relationship
+from datetime import datetime, timezone
 from database import Base
 
 class Match(Base):
@@ -9,6 +10,7 @@ class Match(Base):
     match_id = Column(String, unique=True, index=True)
     duration_seconds = Column(Integer)
     killer_win = Column(Boolean)
+    timestamp = Column(DateTime, default=datetime.utcnow)
 
     players = relationship("MatchPlayer", back_populates="match")
 

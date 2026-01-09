@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from database import SessionLocal, Base, engine
@@ -6,6 +6,7 @@ from orm import Match as MatchOrm, MatchPlayer as MatchPlayerOrm
 from models import Match, MatchPlayer
 from typing import List
 from redis_client import redis_client
+from datetime import datetime, timedelta, timezone
 import json
 
 # This creates all tables if they don't exist.
@@ -21,6 +22,18 @@ def get_db():
     finally:
         db.close()
 
+# This is used to refresh the analytics cache.
+def refresh_analytics_cache(redis):
+    keys = [
+        "analytics:killer_win_rate",
+        "analytics:average_match_duration",
+        "analytics:perk_pick_rates",
+        "analytics:killer_win_rate:7d",
+        "analytics:killer_win_rate:30d"
+    ]
+    for key in keys:
+        redis.delete(key)
+
 # Health check
 @app.get("/")
 def health_check():
@@ -28,7 +41,46 @@ def health_check():
 
 # Post a match (mock)
 @app.post("/match")
-def post_match(match: Match, db: Session = Depends(get_db)):
+def post_match(match: Match, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    # Validation for number of players
+    if len(match.players) != 5:
+        raise HTTPException(
+            status_code=400,
+            detail="A match must contain exactly 5 players."
+        )
+    
+    # Validation for roles
+    killers = [p for p in match.players if p.role == "killer"]
+    survivors = [p for p in match.players if p.role == "survivor"]
+
+    if len(killers) != 1:
+        raise HTTPException(
+            status_code=400,
+            detail="A match must contain exactly 1 killer."
+        )
+    
+    if len(survivors) != 4:
+        raise HTTPException(
+            status_code=400,
+            detail="A match must contain exactly 4 survivors."
+        )
+    
+    # Validation for unique player IDs
+    player_ids = [p.player_id for p in match.players]
+    if len(player_ids) != len(set(player_ids)):
+        raise HTTPException(
+            status_code=400,
+            detail="Duplicate player IDs detected."
+        )
+    
+    # Validation for number of perks equipped
+    for player in match.players:
+        if len(player.perks_used) > 4:
+            raise HTTPException(
+                status_code=400,
+                detail="Players may not equip more than 4 perks."
+            )
+
     # This prevents duplicate match ids.
     existing = db.query(MatchOrm).filter(
         MatchOrm.match_id == match.match_id
@@ -78,15 +130,7 @@ def post_match(match: Match, db: Session = Depends(get_db)):
 
     db.commit()
 
-    # This invalidates the Redis cache for analytics.
-    keys_to_invalidate = [
-        "analytics:killer_win_rate",
-        "analytics:average_match_duration",
-        "analytics:perk_pick_rates"
-    ]
-
-    for key in keys_to_invalidate:
-        redis_client.delete(key)
+    background_tasks.add_task(refresh_analytics_cache, redis_client)
 
     return {"status": "stored", "match_id": match.match_id}
 
@@ -140,24 +184,49 @@ def get_all_matches(db: Session = Depends(get_db)):
 
 @app.get("/analytics/killer-win-rate")
 def killer_win_rate(db: Session = Depends(get_db)):
-    cache_key = "analytics:killer_win_rate"
 
-    cached = redis_client.get(cache_key)
+    cached = redis_client.get("analytics:killer_win_rate")
+
     if cached:
         return json.loads(cached)
-
+    
     total_matches = db.query(MatchOrm).count()
     killer_wins = db.query(MatchOrm).filter(MatchOrm.killer_win == True).count()
 
     win_rate = (killer_wins / total_matches) if total_matches > 0 else 0
 
-    result = {
+    response_data = {
         "total_matches": total_matches,
         "killer_wins": killer_wins,
         "killer_win_rate": round(win_rate, 2)
     }
 
-    redis_client.setex(cache_key, 60, json.dumps(result))
+    redis_client.set("analytics:killer_win_rate", json.dumps(response_data))
+
+    return response_data
+
+@app.get("/analytics/killer-win-rate/recent")
+def killer_win_rate(days: int = 7, db: Session = Depends(get_db)):
+    cache_key = f"analytics:killer_win_rate:{days}d"
+
+    cached = redis_client.get(cache_key)
+    if cached:
+        return json.loads(cached)
+    
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+
+    total_matches = db.query(MatchOrm).filter(MatchOrm.created_at >= since).count()
+    killer_wins = db.query(MatchOrm).filter(MatchOrm.created_at >= since, MatchOrm.killer_win == True).count()
+
+    win_rate = (killer_wins / total_matches) if total_matches > 0 else 0
+
+    result = {
+        "days": days,
+        "total_matches": total_matches,
+        "killer_win_rate": round(win_rate, 2)
+    }
+
+    redis_client.setex(cache_key, 300, json.dumps(result))
 
     return result
 
