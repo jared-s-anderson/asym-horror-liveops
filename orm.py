@@ -10,7 +10,7 @@ class Match(Base):
     match_id = Column(String, unique=True, index=True)
     duration_seconds = Column(Integer)
     killer_win = Column(Boolean)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     players = relationship("MatchPlayer", back_populates="match")
 
