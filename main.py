@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Query
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, aliased
 from sqlalchemy import func, and_, column, select, cast, Integer
 from database import SessionLocal, Base, engine
@@ -8,11 +9,22 @@ from typing import List
 from redis_client import redis_client
 from datetime import datetime, timedelta, timezone
 import json
+import uvicorn
 
 # This creates all tables if they don't exist.
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Asymmetrical Horror Liveops")
+
+"""
+# CORS Middlware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+"""
 
 # Dependency
 def get_db():
@@ -468,3 +480,6 @@ def get_win_rates():
         "killer_win_rate": 0.48,
         "survivor_win_rate": 0.52
     }
+
+if __name__ == "__main__":
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
