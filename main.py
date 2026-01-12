@@ -50,6 +50,9 @@ def refresh_analytics_cache(redis):
     for key in redis.scan_iter("analytics:perk_pick_rates:timeseries:*"):
         redis.delete(key)
 
+    for key in redis.scan_iter("analytics:survivor_win_rate:timeseries"):
+        redis.delete(key)
+
     for key in keys:
         redis.delete(key)
 
@@ -349,6 +352,62 @@ def killer_win_rate_timeseries(days: int = 30, interval: str = Query("day", rege
             "time": r.bucket.isoformat(),
             "matches": r.matches,
             "killer_win_rate": round(win_rate, 3)
+        })
+
+    response = {
+        "interval": interval,
+        "days": days,
+        "points": points
+    }
+
+    redis_client.setex(cache_key, 300, json.dumps(response))
+
+    return response
+
+@app.get("/analytics/survivor-win-rate/timeseries")
+def survivor_win_rate_timeseries(days: int = 30, interval: str = Query("day", regex="^(day|hour)$"), db: Session = Depends(get_db)):
+    cache_key = f"analytics:survivor_win_rate:timeseries:{interval}:{days}d"
+
+    cached = redis_client.get(cache_key)
+
+    if cached:
+        return json.loads(cached)
+    
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    if interval == "day":
+        truncated = func.date_trunc("day", MatchOrm.timestamp).label("bucket")
+    else:
+        truncated = func.date_trunc("hour", MatchOrm.timestamp).label("bucket")
+
+    subq = (
+        select(
+            truncated,
+            cast(MatchOrm.killer_win, Integer).label("killer_win")
+        )
+        .where(MatchOrm.timestamp >= cutoff)
+    ).subquery()
+
+    query = (
+        select(
+            subq.c.bucket,
+            func.count().label("matches"),
+            func.sum(subq.c.killer_win).label("killer_wins")
+        )
+        .group_by(subq.c.bucket)
+        .order_by(subq.c.bucket)
+    )
+
+    results = db.execute(query).all()
+
+    points = []
+
+    for r in results:
+        survivor_win_rate = 1 - (r.killer_wins / r.matches) if r.matches else 0
+        points.append({
+            "time": r.bucket.isoformat(),
+            "matches": r.matches,
+            "survivor_win_rate": round(survivor_win_rate, 3)
         })
 
     response = {
