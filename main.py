@@ -8,6 +8,7 @@ from models import Match, MatchPlayer
 from typing import List
 from redis_client import redis_client
 from datetime import datetime, timedelta, timezone
+from auth import require_api_key
 import json
 import uvicorn
 
@@ -63,7 +64,7 @@ def health_check():
 
 # Post a match (mock)
 @app.post("/match")
-def post_match(match: Match, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def post_match(match: Match, background_tasks: BackgroundTasks, db: Session = Depends(get_db), _: str = Depends(require_api_key)):
     # Validation for number of players
     if len(match.players) != 5:
         raise HTTPException(
